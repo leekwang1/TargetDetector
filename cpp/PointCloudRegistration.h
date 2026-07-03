@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +23,35 @@ struct DetectionImageInput
     std::string key;
 };
 
+struct ArucoDetectorConfig
+{
+    int adaptiveThreshWinSizeMin = 3;
+    int adaptiveThreshWinSizeMax = 23;
+    int adaptiveThreshWinSizeStep = 10;
+    double adaptiveThreshConstant = 7.0;
+    double minMarkerPerimeterRate = 0.01;
+    double maxMarkerPerimeterRate = 4.0;
+    std::string cornerRefinementMethod = "SUBPIX";
+    int cornerRefinementWinSize = 5;
+    bool detectInvertedMarker = false;
+    int perspectiveRemovePixelPerCell = 4;
+    double minOtsuStdDev = 5.0;
+    double perspectiveRemoveIgnoredMarginPerCell = 0.13;
+    double errorCorrectionRate = 0.6;
+    double maxErroneousBitsInBorderRate = 0.35;
+    bool useAruco3Detection = false;
+};
+
+struct SingleImageDetectionSummary
+{
+    std::string imagePath;
+    std::string outputImagePath;
+    int imageWidth = 0;
+    int imageHeight = 0;
+    size_t rejectedCount = 0;
+    std::vector<MarkerDetectionResult> detections;
+};
+
 bool DiscoverDetectionInputs(const std::string &blastPath,
                              const std::string &targetType,
                              std::vector<DetectionImageInput> &outInputs);
@@ -38,10 +68,17 @@ bool LoadTargetPointCloud(const std::string &blastPath,
 bool LoadFaceMarkerCenter3D(const std::string &jsonPath,
                             cv::Point3f &outCenter);
 
+bool DetectMarkerImageStandalone(const std::string &imagePath,
+                                 bool isAruco,
+                                 const ArucoDetectorConfig &config,
+                                 const std::string &outputImagePath,
+                                 SingleImageDetectionSummary &outSummary);
+
 bool Markerdetection(const std::string &blastPath,
                      std::vector<CartesianPointRGB> &points,
                      const std::string &targetType,
-                     bool isAruco = true);
+                     bool isAruco = true,
+                     const ArucoDetectorConfig &config = ArucoDetectorConfig());
 
 bool ExtractAndSaveAndMergePointClouds_Standalone(const std::string &blastPath,
                                                   const std::string &targetType,
@@ -68,4 +105,5 @@ bool RunDetectionPipeline(const std::string &blastPath,
                           bool isAruco,
                           bool usefacemarker,
                           float targetSize,
-                          Mat3 &outFrontDir);
+                          Mat3 &outFrontDir,
+                          const ArucoDetectorConfig &config = ArucoDetectorConfig());

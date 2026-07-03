@@ -1,6 +1,7 @@
 #include "PointCloudRegistration.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -84,16 +85,100 @@ std::string ToJsonKey(const std::string &fileName, const std::string &prefix)
     return stem.substr(prefix.size());
 }
 
-bool SaveDetectionMetaJson(const std::string &detectFolder, bool isAruco)
+json ArucoConfigToJson(const ArucoDetectorConfig &config)
+{
+    return {
+        {"adaptiveThreshWinSizeMin", config.adaptiveThreshWinSizeMin},
+        {"adaptiveThreshWinSizeMax", config.adaptiveThreshWinSizeMax},
+        {"adaptiveThreshWinSizeStep", config.adaptiveThreshWinSizeStep},
+        {"adaptiveThreshConstant", config.adaptiveThreshConstant},
+        {"minMarkerPerimeterRate", config.minMarkerPerimeterRate},
+        {"maxMarkerPerimeterRate", config.maxMarkerPerimeterRate},
+        {"cornerRefinementMethod", config.cornerRefinementMethod},
+        {"cornerRefinementWinSize", config.cornerRefinementWinSize},
+        {"detectInvertedMarker", config.detectInvertedMarker},
+        {"perspectiveRemovePixelPerCell", config.perspectiveRemovePixelPerCell},
+        {"minOtsuStdDev", config.minOtsuStdDev},
+        {"perspectiveRemoveIgnoredMarginPerCell", config.perspectiveRemoveIgnoredMarginPerCell},
+        {"errorCorrectionRate", config.errorCorrectionRate},
+        {"maxErroneousBitsInBorderRate", config.maxErroneousBitsInBorderRate},
+        {"useAruco3Detection", config.useAruco3Detection},
+    };
+}
+
+std::string ToUpperCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch)
+                   { return static_cast<char>(std::toupper(ch)); });
+    return value;
+}
+
+int ParseCornerRefinementMethod(const std::string &method)
+{
+    const std::string upper = ToUpperCopy(method);
+    if (upper == "NONE" || upper == "CORNER_REFINE_NONE")
+        return cv::aruco::CORNER_REFINE_NONE;
+    if (upper == "CONTOUR" || upper == "CORNER_REFINE_CONTOUR")
+        return cv::aruco::CORNER_REFINE_CONTOUR;
+    if (upper == "APRILTAG" || upper == "CORNER_REFINE_APRILTAG")
+        return cv::aruco::CORNER_REFINE_APRILTAG;
+    return cv::aruco::CORNER_REFINE_SUBPIX;
+}
+
+void ApplyDetectorConfig(cv::aruco::DetectorParameters &params,
+                         const ArucoDetectorConfig &config)
+{
+    params.adaptiveThreshWinSizeMin = config.adaptiveThreshWinSizeMin;
+    params.adaptiveThreshWinSizeMax = config.adaptiveThreshWinSizeMax;
+    params.adaptiveThreshWinSizeStep = config.adaptiveThreshWinSizeStep;
+    params.adaptiveThreshConstant = config.adaptiveThreshConstant;
+    params.minMarkerPerimeterRate = config.minMarkerPerimeterRate;
+    params.maxMarkerPerimeterRate = config.maxMarkerPerimeterRate;
+    params.cornerRefinementMethod =
+        static_cast<cv::aruco::CornerRefineMethod>(ParseCornerRefinementMethod(config.cornerRefinementMethod));
+    params.cornerRefinementWinSize = config.cornerRefinementWinSize;
+    params.detectInvertedMarker = config.detectInvertedMarker;
+    params.perspectiveRemovePixelPerCell = config.perspectiveRemovePixelPerCell;
+    params.minOtsuStdDev = config.minOtsuStdDev;
+    params.perspectiveRemoveIgnoredMarginPerCell = config.perspectiveRemoveIgnoredMarginPerCell;
+    params.errorCorrectionRate = config.errorCorrectionRate;
+    params.maxErroneousBitsInBorderRate = config.maxErroneousBitsInBorderRate;
+    params.useAruco3Detection = config.useAruco3Detection;
+}
+
+std::vector<MarkerDetectionResult> BuildMarkerResults(const std::vector<std::vector<cv::Point2f>> &corners,
+                                                      const std::vector<int> &ids)
+{
+    std::vector<MarkerDetectionResult> result;
+    result.reserve(ids.size());
+
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        cv::Point2f center(0.0f, 0.0f);
+        for (const auto &pt : corners[i])
+            center += pt;
+        center *= 0.25f;
+
+        MarkerDetectionResult item;
+        item.id = ids[i];
+        item.center = center;
+        item.corners = corners[i];
+        result.push_back(item);
+    }
+
+    return result;
+}
+
+bool SaveDetectionMetaJson(const std::string &detectFolder,
+                           bool isAruco,
+                           const ArucoDetectorConfig &config)
 {
     json meta;
     meta["schema_version"] = "detect_meta_v1";
     meta["target_type"] = fs::path(detectFolder).filename().string();
     meta["detector_type"] = isAruco ? "aruco" : "custom";
     meta["dictionary"] = isAruco ? "DICT_4X4_50" : "CUSTOM_4X4";
-    meta["parameters"] = {
-        {"cornerRefinementMethod", "CORNER_REFINE_SUBPIX"},
-        {"minMarkerPerimeterRate", 0.01}};
+    meta["parameters"] = ArucoConfigToJson(config);
 
     const fs::path metaPath = fs::path(detectFolder) / "detect_meta.json";
     std::ofstream ofs(metaPath);
@@ -129,74 +214,50 @@ cv::aruco::Dictionary createCustomDictionaryFromBits()
     return dict;
 }
 
-std::vector<MarkerDetectionResult> findAllArucoMarkerCentersById(const cv::Mat &image)
+std::vector<MarkerDetectionResult> findAllArucoMarkerCentersById(const cv::Mat &image,
+                                                                 const ArucoDetectorConfig &config,
+                                                                 size_t *outRejectedCount = nullptr)
 {
-    std::vector<MarkerDetectionResult> result;
-
     cv::aruco::Dictionary dictionary =
         cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50);
 
     cv::aruco::DetectorParameters params;
-    params.minMarkerPerimeterRate = 0.01;
-    params.cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX;
+    ApplyDetectorConfig(params, config);
 
     cv::aruco::ArucoDetector detector(dictionary, params);
 
     std::vector<std::vector<cv::Point2f>> corners;
     std::vector<int> ids;
-    detector.detectMarkers(image, corners, ids);
+    std::vector<std::vector<cv::Point2f>> rejected;
+    detector.detectMarkers(image, corners, ids, rejected);
+
+    if (outRejectedCount != nullptr)
+        *outRejectedCount = rejected.size();
 
     SENDLOGF_TAG(LOG_TAG, "Detected %d aruco markers", static_cast<int>(ids.size()));
-
-    for (size_t i = 0; i < ids.size(); ++i)
-    {
-        cv::Point2f center(0.0f, 0.0f);
-        for (const auto &pt : corners[i])
-            center += pt;
-        center *= 0.25f;
-
-        MarkerDetectionResult item;
-        item.id = ids[i];
-        item.center = center;
-        item.corners = corners[i];
-        result.push_back(item);
-    }
-
-    return result;
+    return BuildMarkerResults(corners, ids);
 }
 
-std::vector<MarkerDetectionResult> findCustomMarkerCenters(const cv::Mat &image)
+std::vector<MarkerDetectionResult> findCustomMarkerCenters(const cv::Mat &image,
+                                                           const ArucoDetectorConfig &config,
+                                                           size_t *outRejectedCount = nullptr)
 {
-    std::vector<MarkerDetectionResult> result;
-
     cv::aruco::Dictionary dict = createCustomDictionaryFromBits();
     cv::aruco::DetectorParameters params;
-    params.minMarkerPerimeterRate = 0.01;
-    params.cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX;
+    ApplyDetectorConfig(params, config);
 
     cv::aruco::ArucoDetector detector(dict, params);
 
     std::vector<std::vector<cv::Point2f>> corners;
     std::vector<int> ids;
-    detector.detectMarkers(image, corners, ids);
+    std::vector<std::vector<cv::Point2f>> rejected;
+    detector.detectMarkers(image, corners, ids, rejected);
+
+    if (outRejectedCount != nullptr)
+        *outRejectedCount = rejected.size();
 
     SENDLOGF_TAG(LOG_TAG, "Detected %d custom markers", static_cast<int>(ids.size()));
-
-    for (size_t i = 0; i < ids.size(); ++i)
-    {
-        cv::Point2f center(0.0f, 0.0f);
-        for (const auto &pt : corners[i])
-            center += pt;
-        center *= 0.25f;
-
-        MarkerDetectionResult item;
-        item.id = ids[i];
-        item.center = center;
-        item.corners = corners[i];
-        result.push_back(item);
-    }
-
-    return result;
+    return BuildMarkerResults(corners, ids);
 }
 
 cv::Vec3f pixelToRayWorld(int pixelX,
@@ -484,10 +545,77 @@ bool SaveFacemarkerJson(const std::string &jsonPath,
     }
 }
 
+void DrawMarkerDetections(cv::Mat &vis,
+                          const std::vector<MarkerDetectionResult> &markerResults)
+{
+    for (const auto &marker : markerResults)
+    {
+        cv::drawMarker(vis, marker.center, cv::Scalar(0, 255, 0), cv::MARKER_CROSS, 24, 2);
+        for (const auto &corner : marker.corners)
+            cv::circle(vis, corner, 4, cv::Scalar(255, 0, 0), -1);
+        cv::putText(vis,
+                    std::to_string(marker.id),
+                    cv::Point(static_cast<int>(marker.center.x) + 8, static_cast<int>(marker.center.y) - 8),
+                    cv::FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    cv::Scalar(0, 0, 255),
+                    2);
+    }
+}
+
+} // namespace
+
+bool DetectMarkerImageStandalone(const std::string &imagePath,
+                                 bool isAruco,
+                                 const ArucoDetectorConfig &config,
+                                 const std::string &outputImagePath,
+                                 SingleImageDetectionSummary &outSummary)
+{
+    const cv::Mat image = cv::imread(imagePath, cv::IMREAD_COLOR);
+    if (image.empty())
+    {
+        SENDLOGF_TAG(LOG_TAG, "Failed to load image: %s", imagePath.c_str());
+        return false;
+    }
+
+    size_t rejectedCount = 0;
+    std::vector<MarkerDetectionResult> markerResults =
+        isAruco ? findAllArucoMarkerCentersById(image, config, &rejectedCount)
+                : findCustomMarkerCenters(image, config, &rejectedCount);
+
+    cv::Mat vis = image.clone();
+    DrawMarkerDetections(vis, markerResults);
+
+    fs::path savedPath = outputImagePath.empty()
+                             ? (fs::path(imagePath).parent_path() / (fs::path(imagePath).stem().string() + "_aruco_result.jpg"))
+                             : fs::path(outputImagePath);
+    if (!savedPath.is_absolute())
+        savedPath = fs::absolute(savedPath);
+    fs::create_directories(savedPath.parent_path());
+
+    if (!cv::imwrite(savedPath.string(), vis))
+    {
+        SENDLOGF_TAG(LOG_TAG, "Failed to save marked image: %s", savedPath.string().c_str());
+        return false;
+    }
+
+    outSummary.imagePath = imagePath;
+    outSummary.outputImagePath = savedPath.string();
+    outSummary.imageWidth = image.cols;
+    outSummary.imageHeight = image.rows;
+    outSummary.rejectedCount = rejectedCount;
+    outSummary.detections = std::move(markerResults);
+    return true;
+}
+
+namespace
+{
+
 bool DetectMarkersAndSaveImages(const std::string &blastPath,
                                 const std::vector<CartesianPointRGB> &pointCloud,
                                 const std::string &targetType,
-                                bool isAruco)
+                                bool isAruco,
+                                const ArucoDetectorConfig &config)
 {
     std::vector<DetectionImageInput> inputs;
     if (!DiscoverDetectionInputs(blastPath, targetType, inputs))
@@ -498,7 +626,7 @@ bool DetectMarkersAndSaveImages(const std::string &blastPath,
 
     const std::string detectFolder = DetectionFolder(blastPath, targetType);
     fs::create_directories(detectFolder);
-    SaveDetectionMetaJson(detectFolder, isAruco);
+    SaveDetectionMetaJson(detectFolder, isAruco, config);
 
     std::vector<std::pair<int, cv::Point2f>> facemarkerDetections;
 
@@ -512,22 +640,13 @@ bool DetectMarkersAndSaveImages(const std::string &blastPath,
         }
 
         std::vector<MarkerDetectionResult> markerResults =
-            isAruco ? findAllArucoMarkerCentersById(image) : findCustomMarkerCenters(image);
+            isAruco ? findAllArucoMarkerCentersById(image, config)
+                    : findCustomMarkerCenters(image, config);
 
         cv::Mat vis = image.clone();
+        DrawMarkerDetections(vis, markerResults);
         for (const auto &marker : markerResults)
         {
-            cv::drawMarker(vis, marker.center, cv::Scalar(0, 255, 0), cv::MARKER_CROSS, 24, 2);
-            for (const auto &corner : marker.corners)
-                cv::circle(vis, corner, 4, cv::Scalar(255, 0, 0), -1);
-            cv::putText(vis,
-                        std::to_string(marker.id),
-                        cv::Point(static_cast<int>(marker.center.x) + 8, static_cast<int>(marker.center.y) - 8),
-                        cv::FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        cv::Scalar(0, 0, 255),
-                        2);
-
             if (marker.id == 0)
                 facemarkerDetections.emplace_back(marker.id, marker.center);
         }
@@ -766,11 +885,12 @@ bool LoadFaceMarkerCenter3D(const std::string &jsonPath,
 bool Markerdetection(const std::string &blastPath,
                      std::vector<CartesianPointRGB> &points,
                      const std::string &targetType,
-                     bool isAruco)
+                     bool isAruco,
+                     const ArucoDetectorConfig &config)
 {
     const auto start = std::chrono::steady_clock::now();
 
-    if (!DetectMarkersAndSaveImages(blastPath, points, targetType, isAruco))
+    if (!DetectMarkersAndSaveImages(blastPath, points, targetType, isAruco, config))
         return false;
 
     const auto end = std::chrono::steady_clock::now();
@@ -1092,7 +1212,8 @@ bool RunDetectionPipeline(const std::string &blastPath,
                           bool isAruco,
                           bool usefacemarker,
                           float targetSize,
-                          Mat3 &outFrontDir)
+                          Mat3 &outFrontDir,
+                          const ArucoDetectorConfig &config)
 {
     outFrontDir = IdentityMat3();
 
@@ -1103,7 +1224,7 @@ bool RunDetectionPipeline(const std::string &blastPath,
         return false;
     }
 
-    if (!Markerdetection(blastPath, points, targetType, isAruco))
+    if (!Markerdetection(blastPath, points, targetType, isAruco, config))
         return false;
 
     return FindCenter3DPt(blastPath, targetType, points, targetSize, usefacemarker, outFrontDir);
