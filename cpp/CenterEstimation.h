@@ -102,10 +102,6 @@ static bool loadPrevCenters_JSON(const std::string &jsonPath,
 static bool loadPrevCenters_PLY(const std::string &plyPath,
                                 std::vector<std::pair<std::string, cv::Vec3f>> &out);
 
-// 기준점 c 주변 반경 r_cm 내의 점만 추출해 ROI 점 목록(좌표)으로 반환한다.
-static std::vector<cv::Vec3f> gatherROI(const std::vector<CartesianPointRGB> &pc,
-                                        const cv::Vec3f &c, float r_cm);
-
 // 입력 점들로 PCA를 수행해 평면의 mean,u,v,n(법선)을 추정한다.
 static PlaneFit fitPlanePCA(const std::vector<cv::Vec3f> &pts);
 
@@ -115,27 +111,17 @@ static void rasterizeBinary(const std::vector<cv::Vec3f> &pts,
                             cv::Mat &img, UVBox &box,
                             float cell_mm = 2.0f);
 
-// 바이너리 컨투어들 중 가장 큰 정사각형의 minAreaRect 중심 픽셀을 찾는다.
-static bool findRectCenter_minArea(const cv::Mat &img, cv::Point2f &pixC);
-
 // 픽셀 중심을 UVBox 범위를 통해 (U,V)로 환산하고 3D 평면 위 좌표로 역투영한다.
 static cv::Vec3f uvCenterTo3D(const PlaneFit &pf, const UVBox &b, const cv::Point2f &pc);
 
-// (id,center) 목록을 PLY(빨간 점)와 JSON으로 dir/stem.*에 저장한다.
-static bool saveCentersPLYJSON(const std::string &dir, const std::string &stem,
-                               const std::vector<std::pair<std::string, cv::Vec3f>> &centers);
-
-// minAreaRect 후보 중 10cm 정사각 크기/종횡비 게이트를 통과한 사각의 중심을 반환한다.
-static bool findRectCenter_minAreaGated(const cv::Mat &img, const UVBox &box, cv::Point2f &pixC,
-                                        float sideMin = 0.08f, float sideMax = 0.12f,      // 한 변(m)
-                                        float aspectMin = 0.85f, float aspectMax = 1.18f); // 종횡비
+// (id,center) 목록을 JSON으로 저장한다.
+static bool saveCentersJSON(const std::string &path,
+                            const std::vector<std::pair<std::string, cv::Vec3f>> &centers);
 
 // C_prev 기반 ROI에서 intensity만으로 타겟 중심을 재추정해 targets3d_intensity.*로 저장한다.
 bool ComputeIntensityCenters(const std::string &blastPath,
                              const std::string &targetType,
                              std::vector<CartesianPointRGB> &points,
-                             Mat3 &outFrontDir,
-                             bool usefacemarker = false,
                              float targetSize = 10.0f, // 타겟(마커 흰부분) 크기
                              float t_low = 0.15f,      // 사각 밝은 픽셀 상한(터널의 경우 0.1)
                              float alpha = 50.0f);     // 근접성 패털티 가중치(터널의 경우 35~45)

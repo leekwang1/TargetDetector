@@ -81,3 +81,11 @@ static Vec3 mat3MulVec3(const Mat3 &M, const Vec3 &v)
 }
 
 using Matrix4x4 = std::array<std::array<double, 4>, 4>;
+
+static Vec3 matrix4TransformPoint(const Matrix4x4 &M, const Vec3 &v)
+{
+    return {
+        M[0][0] * v.x + M[0][1] * v.y + M[0][2] * v.z + M[0][3],
+        M[1][0] * v.x + M[1][1] * v.y + M[1][2] * v.z + M[1][3],
+        M[2][0] * v.x + M[2][1] * v.y + M[2][2] * v.z + M[2][3]};
+}

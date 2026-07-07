@@ -66,6 +66,9 @@ Mat3 computeFaceAlignmentMatrix(const cv::Point3f &faceCenter);
 void rotatePointCloudInPlace(std::vector<CartesianPointRGB> &points,
                              const Mat3 &R);
 
+void transformPointCloudInPlace(std::vector<CartesianPointRGB> &points,
+                                const Matrix4x4 &M);
+
 // 정면방향 점군 필터링
 std::vector<CartesianPointRGB> filterByFrontRangeMinusZ(const std::vector<CartesianPointRGB> &points,
                                                         float backMax,        // 뒤쪽 최대 거리 (예: 5.0f)

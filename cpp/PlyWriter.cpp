@@ -1,6 +1,5 @@
+#include "jni/log_jni.h"
 #include "PlyWriter.h"
-#include "logging.h"
-#include <cstdint>
 #include <iomanip>
 #include <limits>
 #include <vector>
@@ -390,6 +389,25 @@ void rotatePointCloudInPlace(std::vector<CartesianPointRGB> &points,
     {
         Vec3 v{p.x, p.y, p.z};
         Vec3 r = mat3MulVec3(R, v);
+        p.x = static_cast<float>(r.x);
+        p.y = static_cast<float>(r.y);
+        p.z = static_cast<float>(r.z);
+    }
+}
+
+void transformPointCloudInPlace(std::vector<CartesianPointRGB> &points,
+                                const Matrix4x4 &M)
+{
+    if (points.empty())
+    {
+        SENDLOGF_TAG(LOG_TAG, "[transformPointCloudInPlace] points is empty. Skip transform.");
+        return;
+    }
+
+    for (auto &p : points)
+    {
+        Vec3 v{p.x, p.y, p.z};
+        Vec3 r = matrix4TransformPoint(M, v);
         p.x = static_cast<float>(r.x);
         p.y = static_cast<float>(r.y);
         p.z = static_cast<float>(r.z);
